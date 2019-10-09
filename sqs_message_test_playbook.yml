@@ -1,0 +1,196 @@
+# Tests for the sqs_message.py Ansible module
+- name: test the sqs_message module
+  hosts: localhost
+  tasks:
+
+  - name: create test SQS queue
+    sqs_queue:
+      name: sqs-test-queue
+      region: us-east-1
+
+  - name: flush the queue
+    sqs_message:
+      queue_name: sqs-test-queue
+      region: us-east-1
+      wait_seconds: 0
+      delete: true
+
+# Test: flush / no flush
+  - name: send test message (no delay)
+    sqs_message:
+      action: send
+      queue_name: sqs-test-queue
+      region: us-east-1
+      body: test
+
+  - name: ensure we received the test message but don't flush it
+    sqs_message:
+      queue_name: sqs-test-queue
+      region: us-east-1
+      wait_seconds: 1
+      visibility_timeout_seconds: 1
+      return_on_reception: true
+    register: result
+    failed_when: result.messages | length != 1
+
+  - name: ensure the message is still there and flush it
+    sqs_message:
+      queue_name: sqs-test-queue
+      region: us-east-1
+      wait_seconds: 2
+      return_on_reception: true
+      delete: true
+    register: result
+    failed_when: result.messages | length != 1
+
+  - name: ensure the queue is empty after flushing
+    sqs_message:
+      queue_name: sqs-test-queue
+      region: us-east-1
+      wait_seconds: 1
+    register: result
+    failed_when: result.messages | length != 0
+
+# Test: send message with delay
+  - name: send test message with delay
+    sqs_message:
+      action: send
+      queue_name: sqs-test-queue
+      region: us-east-1
+      delay_seconds: 3
+      body: test
+
+  - name: ensure the message is not received with a short timeout
+    sqs_message:
+      queue_name: sqs-test-queue
+      region: us-east-1
+      wait_seconds: 1
+      delete: true
+    register: result
+    failed_when: result.messages | length != 0
+
+  - name: ensure the message is received with a longer timeout
+    sqs_message:
+      queue_name: sqs-test-queue
+      region: us-east-1
+      wait_seconds: 3
+      delete: true
+    register: result
+    failed_when: result.messages | length != 1
+
+# Test: receive messages at different times
+  - name: send test message with no delay
+    sqs_message:
+      action: send
+      queue_name: sqs-test-queue
+      region: us-east-1
+      delay_seconds: 0
+      body: test
+
+  - name: send test message with small delay
+    sqs_message:
+      action: send
+      queue_name: sqs-test-queue
+      region: us-east-1
+      delay_seconds: 1
+      body: test
+
+  - name: send test message with longer delay
+    sqs_message:
+      action: send
+      queue_name: sqs-test-queue
+      region: us-east-1
+      delay_seconds: 3
+      body: test
+
+  - name: ensure all messages are received
+    sqs_message:
+      queue_name: sqs-test-queue
+      region: us-east-1
+      wait_seconds: 5
+      delete: true
+    register: result
+    failed_when: result.messages | length != 3
+
+# Test: return on reception
+  - name: send test message with delay
+    sqs_message:
+      action: send
+      queue_name: sqs-test-queue
+      region: us-east-1
+      delay_seconds: 1
+      body: test
+
+  - name: send test message with longer delay
+    sqs_message:
+      action: send
+      queue_name: sqs-test-queue
+      region: us-east-1
+      delay_seconds: 3
+      body: test
+
+  - name: ensure only the first message is received if we don't wait
+    sqs_message:
+      queue_name: sqs-test-queue
+      region: us-east-1
+      wait_seconds: 5
+      return_on_reception: true
+      delete: true
+    register: result
+    failed_when: result.messages | length != 1
+
+  - name: ensure the second message is received afterwards
+    sqs_message:
+      queue_name: sqs-test-queue
+      region: us-east-1
+      wait_seconds: 3
+      return_on_reception: true
+      delete: true
+    register: result
+    failed_when: result.messages | length != 1
+
+# Text: filter
+  - name: send first test message
+    sqs_message:
+      action: send
+      queue_name: sqs-test-queue
+      region: us-east-1
+      body: first
+
+  - name: send second test message
+    sqs_message:
+      action: send
+      queue_name: sqs-test-queue
+      region: us-east-1
+      body: second
+
+  - name: ensure only the second message is received if we filter
+    sqs_message:
+      queue_name: sqs-test-queue
+      region: us-east-1
+      wait_seconds: 1
+      filter_regex: se..nd
+      delete: true
+      visibility_timeout_seconds: 1
+    register: result
+    failed_when: result.messages | length != 1 and result.messages[0] == "second"
+
+  - name: ensure only the first message is still there
+    sqs_message:
+      queue_name: sqs-test-queue
+      region: us-east-1
+      wait_seconds: 1
+      delete: true
+    register: result
+    failed_when: result.messages | length != 1 and result.messages[0] == "first"
+
+  - name: dump test output
+    debug:
+      msg: '{{ result }}'
+
+  # Finished - delete test SQS queue
+  - name: Remove the SQS test queue
+    sqs_queue:
+      name: sqs-test-queue
+      region: us-east-1
+      state: absent
